@@ -1,124 +1,218 @@
-"""
-brlfetch Installer + Updater
-Installs or updates brlfetch to ~/.local/bin/brlfetch
-Supports updating via a remote URL with -u/--update
-"""
-
 import os
-import sys
+import platform
 import subprocess
+import sys
 import urllib.request
-from pathlib import Path
 
-# Configuration
-INSTALL_DIR = Path.home() / ".local" / "bin"
-SCRIPT_PATH = INSTALL_DIR / "brlfetch"
-REMOTE_URL = "https://raw.githubusercontent.com/yourusername/brlfetch/main/brlfetch.py"  # change to your repo/pastebin raw
+VERSION = "1.0.0"
+VERSION_URL = "https://raw.githubusercontent.com/midplays09/brl-fetch/main/version.txt"
+ASCII_ART = [
+    r"   \\\\\\\\\\\\                       ",
+    r"    \\\      \\\                      ",
+    r"     \\\      \\\                     ",
+    r"      \\\      \\\\\\\\\\\\\\\\\      ",
+    r"       \\\                    \\\     ",
+    r"        \\\                    \\\    ",
+    r"         \\\        ______      \\\   ",
+    r"          \\\                   ///   ",
+    r"           \\\                 ///    ",
+    r"            \\\               ///     ",
+    r"             \\\////////////////       "
+]
 
-# =============================================================================
-# COLORS
-# =============================================================================
-class Colors:
-    RESET = '\033[0m'
-    BOLD = '\033[1m'
-    GREEN = '\033[92m'
-    YELLOW = '\033[93m'
-    BLUE = '\033[94m'
-    RED = '\033[91m'
-    CYAN = '\033[96m'
+# ANSI colors
+RESET = "\033[0m"
+BOLD = "\033[1m"
+RED = "\033[91m"
+GREEN = "\033[92m"
+YELLOW = "\033[93m"
+BLUE = "\033[94m"
+MAGENTA = "\033[95m"
+CYAN = "\033[96m"
+WHITE = "\033[97m"
 
-# =============================================================================
-# UTILITY FUNCTIONS
-# =============================================================================
-def print_step(step, msg):
-    print(f"{Colors.BLUE}[{step}]{Colors.RESET} {msg}")
+try:
+    import psutil
+except ImportError:
+    psutil = None
 
-def print_success(msg):
-    print(f"{Colors.GREEN}✔ {msg}{Colors.RESET}")
+# -------------------- System Info -------------------- #
+class SystemInfo:
+    def __init__(self):
+        self.info = {}
+        self.collect()
 
-def print_warning(msg):
-    print(f"{Colors.YELLOW}⚠ {msg}{Colors.RESET}")
+    def collect(self):
+        self.info["user"] = self.get_user()
+        self.info["host"] = self.get_hostname()
+        self.info["os"] = self.get_os()
+        self.info["kernel"] = platform.release()
+        self.info["uptime"] = self.get_uptime()
+        self.info["shell"] = self.get_shell()
+        self.info["de"] = self.get_desktop_environment()
+        self.info["wm"] = self.get_window_manager()
+        self.info["term"] = self.get_terminal()
+        self.info["cpu"] = self.get_cpu()
+        self.info["gpu"] = self.get_gpu()
+        self.info["memory"] = self.get_memory()
+        self.info["disk"] = self.get_disk()
 
-def print_error(msg):
-    print(f"{Colors.RED}✖ {msg}{Colors.RESET}")
+    def get_user(self):
+        return os.environ.get("USER") or os.environ.get("USERNAME") or "unknown"
 
-def check_python():
-    print_step(1, "Checking Python version...")
-    if sys.version_info < (3,6):
-        print_error("Python 3.6+ required")
-        return False
-    print_success(f"Python {sys.version.split()[0]} OK")
-    return True
+    def get_hostname(self):
+        return platform.node()
 
-def install_dependencies():
-    print_step(2, "Checking dependencies...")
-    try:
-        import psutil
-        print_success("psutil found")
-        return True
-    except ImportError:
-        print_warning("psutil not found (memory/disk info may show 'unknown')")
-        resp = input("Install psutil now? (y/n): ").strip().lower()
-        if resp in ["y","yes"]:
+    def get_os(self):
+        try:
+            with open("/etc/os-release") as f:
+                for line in f:
+                    if line.startswith("PRETTY_NAME="):
+                        return line.strip().split("=")[1].strip('"')
+        except:
+            pass
+        return platform.system()
+
+    def get_uptime(self):
+        try:
+            if psutil:
+                seconds = int(platform.time() - psutil.boot_time())
+            else:
+                with open("/proc/uptime") as f:
+                    seconds = int(float(f.readline().split()[0]))
+            days, rem = divmod(seconds, 86400)
+            hrs, rem = divmod(rem, 3600)
+            mins, _ = divmod(rem, 60)
+            parts = []
+            if days: parts.append(f"{days}d")
+            if hrs: parts.append(f"{hrs}h")
+            parts.append(f"{mins}m")
+            return " ".join(parts)
+        except:
+            return "unknown"
+
+    def get_shell(self):
+        return os.path.basename(os.environ.get("SHELL", "unknown"))
+
+    def get_desktop_environment(self):
+        de = os.environ.get("XDG_CURRENT_DESKTOP") or os.environ.get("DESKTOP_SESSION")
+        return de or "unknown"
+
+    def get_window_manager(self):
+        # Detect common Linux WMs
+        wm = os.environ.get("WAYLAND_DISPLAY")  # wayland hint
+        if "HYPRLAND_INSTANCE_SIGNATURE" in os.environ:
+            return "HyprLand"
+        elif "SWAYSOCK" in os.environ:
+            return "Sway"
+        elif os.environ.get("i3") or os.environ.get("I3SOCK"):
+            return "i3"
+        else:
+            # fallback using wmctrl
             try:
-                subprocess.check_call([sys.executable,"-m","pip","install","psutil"])
-                print_success("psutil installed")
-            except Exception as e:
-                print_error(f"Failed to install psutil: {e}")
-        return True
+                out = subprocess.check_output(["wmctrl","-m"], universal_newlines=True)
+                for line in out.splitlines():
+                    if line.startswith("Name:"):
+                        wm = line.split(":",1)[1].strip()
+            except:
+                wm = None
+        return wm or "unknown"
 
-def fetch_remote_script(url):
+    def get_terminal(self):
+        return os.environ.get("TERM_PROGRAM") or os.environ.get("TERM") or "unknown"
+
+    def get_cpu(self):
+        cpu = platform.processor()
+        if not cpu:
+            try:
+                with open("/proc/cpuinfo") as f:
+                    for line in f:
+                        if "model name" in line:
+                            cpu = line.split(":",1)[1].strip()
+                            break
+            except:
+                cpu = "unknown"
+        if psutil:
+            cores = psutil.cpu_count(logical=False)
+            threads = psutil.cpu_count(logical=True)
+            cpu += f" ({cores}C/{threads}T)"
+        return cpu
+
+    def get_gpu(self):
+        if platform.system() != "Linux":
+            return None
+        try:
+            out = subprocess.check_output(["lspci"], universal_newlines=True)
+            for line in out.splitlines():
+                if "VGA" in line or "3D" in line:
+                    return line.split(":",2)[-1].strip()
+        except:
+            return None
+
+    def get_memory(self):
+        if not psutil: return "unknown"
+        mem = psutil.virtual_memory()
+        used = mem.used / (1024**3)
+        total = mem.total / (1024**3)
+        return f"{used:.1f}GiB / {total:.1f}GiB ({mem.percent}%)"
+
+    def get_disk(self):
+        if not psutil: return "unknown"
+        try:
+            disk = psutil.disk_usage("/")
+            used = disk.used / (1024**3)
+            total = disk.total / (1024**3)
+            return f"{used:.1f}GiB / {total:.1f}GiB ({disk.percent}%)"
+        except:
+            return "unknown"
+
+# -------------------- Display -------------------- #
+def display(info):
+    max_art_width = max(len(line) for line in ASCII_ART)
+    padding = 4
+    user_host = f"{BOLD}{info['user']}@{info['host']}{RESET}"
+    sep = "-" * len(f"{info['user']}@{info['host']}")
+    info_lines = [
+        user_host,
+        sep,
+        f"{CYAN}OS:{RESET} {info['os']}",
+        f"{CYAN}Kernel:{RESET} {info['kernel']}",
+        f"{CYAN}Uptime:{RESET} {info['uptime']}",
+        f"{CYAN}Shell:{RESET} {info['shell']}",
+        f"{CYAN}DE:{RESET} {info['de']}",
+        f"{CYAN}WM:{RESET} {info['wm']}",
+        f"{CYAN}Terminal:{RESET} {info['term']}",
+        f"{CYAN}CPU:{RESET} {info['cpu']}",
+    ]
+    if info["gpu"]:
+        info_lines.append(f"{CYAN}GPU:{RESET} {info['gpu']}")
+    info_lines += [
+        f"{CYAN}Memory:{RESET} {info['memory']}",
+        f"{CYAN}Disk:{RESET} {info['disk']}"
+    ]
+
+    max_lines = max(len(ASCII_ART), len(info_lines))
+    for i in range(max_lines):
+        art_line = ASCII_ART[i] if i < len(ASCII_ART) else " " * max_art_width
+        info_text = info_lines[i] if i < len(info_lines) else ""
+        print(f"{CYAN}{art_line}{RESET}{' '*padding}{info_text}")
+
+# -------------------- Update Check -------------------- #
+def check_update():
     try:
-        with urllib.request.urlopen(url, timeout=10) as r:
-            return r.read().decode("utf-8")
-    except Exception as e:
-        print_error(f"Failed to fetch script from URL: {e}")
-        return None
+        with urllib.request.urlopen(VERSION_URL, timeout=5) as r:
+            latest = r.read().decode().strip()
+        if latest != VERSION:
+            print(f"{YELLOW}New version available: {latest} (current: {VERSION}){RESET}")
+            print(f"Run your installer with -u/--update to get the latest version.")
+    except:
+        pass
 
-def write_script(content):
-    INSTALL_DIR.mkdir(parents=True, exist_ok=True)
-    try:
-        with open(SCRIPT_PATH, "w") as f:
-            f.write(content)
-        os.chmod(SCRIPT_PATH, 0o755)
-        print_success(f"Installed/Updated to: {SCRIPT_PATH}")
-        return True
-    except Exception as e:
-        print_error(f"Failed to write script: {e}")
-        return False
-
-def check_path():
-    if str(INSTALL_DIR) in os.environ.get("PATH",""):
-        print_success(f"{INSTALL_DIR} is in PATH")
-    else:
-        print_warning(f"{INSTALL_DIR} is NOT in PATH")
-        print(f"Add this to your shell config:\nexport PATH=\"$HOME/.local/bin:$PATH\"")
-
-# =============================================================================
-# MAIN INSTALL/UPDATE LOGIC
-# =============================================================================
+# -------------------- Main -------------------- #
 def main():
-    update_mode = False
-    if len(sys.argv) > 1 and sys.argv[1] in ["-u","--update"]:
-        update_mode = True
-
-    print(f"\n{Colors.CYAN}{Colors.BOLD}brlfetch Installer{' (Update Mode)' if update_mode else ''}{Colors.RESET}\n")
-
-    if not check_python():
-        sys.exit(1)
-    install_dependencies()
-
-    # Fetch remote script
-    print_step(3, f"{'Updating' if update_mode else 'Installing'} brlfetch...")
-    script_content = fetch_remote_script(REMOTE_URL)
-    if not script_content:
-        sys.exit(1)
-    
-    if not write_script(script_content):
-        sys.exit(1)
-    
-    check_path()
-    print_success("Done! You can run brlfetch now.\n")
+    check_update()
+    si = SystemInfo()
+    display(si.info)
 
 if __name__ == "__main__":
     main()
